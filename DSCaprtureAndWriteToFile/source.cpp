@@ -123,9 +123,6 @@ CComPtr<IPin> GetPin(IBaseFilter *pFilter, LPCOLESTR pinName)
 HRESULT BuildGraph(IGraphBuilder *pGraph)
 {
 	HRESULT hr = S_OK;
-	IPin *pPinIn;
-	IPin *pPinOut;
-
 	CComPtr<ICaptureGraphBuilder2> pBuilder;
 	hr = pBuilder.CoCreateInstance(CLSID_CaptureGraphBuilder2);
 	CHECK_HR(hr, "Can't create Capture Graph Builder");
@@ -152,8 +149,6 @@ HRESULT BuildGraph(IGraphBuilder *pGraph)
 
 	VIDEOINFOHEADER pSGrabber_format;
 	ZeroMemory(&pSGrabber_format, sizeof(VIDEOINFOHEADER));
-	pSGrabber_format.dwBitErrorRate = 13824000;
-	pSGrabber_format.AvgTimePerFrame = 666666;
 	pSGrabber_format.bmiHeader.biSize = 40;
 	pSGrabber_format.bmiHeader.biWidth = 320;
 	pSGrabber_format.bmiHeader.biHeight = 240;
@@ -189,12 +184,8 @@ HRESULT BuildGraph(IGraphBuilder *pGraph)
 	hr = pGraph->AddFilter(pColorSpaceConverter, L"Color Space Converter");
 	CHECK_HR(hr, "Can't add CSC to graph");
 
-
-	pPinIn = GetPin(pColorSpaceConverter, L"Input");
-	pPinOut = GetPin(pAVIDecompressor, L"XForm Out");
-
 	// соединение AVIDec и CSC
-	hr = pGraph->ConnectDirect(pPinOut, pPinIn, NULL);
+	hr = pGraph->ConnectDirect(GetPin(pAVIDecompressor, L"XForm Out"), GetPin(pColorSpaceConverter, L"Input"), NULL);
 	CHECK_HR(hr, "Can't connect AVIDec and CSC");
 
 	// Подключение VideoRenderer
