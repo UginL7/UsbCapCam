@@ -1,13 +1,18 @@
+#include <conio.h>
 #include <dshow.h>
 #include <atlbase.h>
 #include <initguid.h>
 #include <dvdmedia.h>
 #include <wmsdkidl.h>
 #include "SampleGrabber.h"
+#include "CallbackObject.h"
 
 #pragma comment(lib, "Strmiids.lib")
 #pragma comment(lib, "Quartz.lib")
 
+static
+const
+CLSID CLSID_NullRenderer = { 0xC1F400A4, 0x3F08, 0x11d3,{ 0x9F, 0x0B, 0x00, 0x60, 0x08, 0x03, 0x9E, 0x37 } };
 
 // {860BB310-5D01-11D0-BD3B-00A0C911CE86}
 DEFINE_GUID(CLSID_VideoCaptureSource,
@@ -188,6 +193,16 @@ HRESULT BuildGraph(IGraphBuilder *pGraph)
 	hr = pGraph->ConnectDirect(GetPin(pAVIDecompressor, L"XForm Out"), GetPin(pColorSpaceConverter, L"Input"), NULL);
 	CHECK_HR(hr, "Can't connect AVIDec and CSC");
 
+
+
+	/////////////////////////
+	// Вставить сюда callback
+	/////////////////////////
+
+
+
+
+
 	// Подключение VideoRenderer
 	CComPtr<IBaseFilter> pVideoRend;
 	hr = pVideoRend.CoCreateInstance(CLSID_VideoRenderer);
@@ -202,6 +217,91 @@ HRESULT BuildGraph(IGraphBuilder *pGraph)
 }
 
 
+HRESULT BuildGraph_StreamControl(IGraphBuilder *pGraph)
+{
+	HRESULT hr = S_OK;
+
+	// Создание основного графа
+	CComPtr<ICaptureGraphBuilder2> pBuilder;
+	hr = pBuilder.CoCreateInstance(CLSID_CaptureGraphBuilder2);
+	CHECK_HR(hr, "Can't create Capture Graph Builder");
+	// установка фильтра графа строителя :)
+	hr = pBuilder->SetFiltergraph(pGraph);
+	CHECK_HR(hr, "Can't SetFiltergraph");
+
+	// Подключение камеры и добавления фильтра камеры
+	CComPtr<IBaseFilter> pCamera = CreateFilterByName(L"Logitech QuickCam Pro 5000", CLSID_VideoCaptureSource);
+	hr = pGraph->AddFilter(pCamera, L"Logitech QuickCam Pro 5000");
+	CHECK_HR(hr, _T("Can't add USB2.0 Camera to graph"));
+
+	// Заполнения структур для тип данных и заголовка формата
+	AM_MEDIA_TYPE pmt;
+	ZeroMemory(&pmt, sizeof(AM_MEDIA_TYPE));
+	pmt.majortype = MEDIATYPE_Video;
+	pmt.subtype = WMMEDIASUBTYPE_I420;
+	pmt.formattype = FORMAT_VideoInfo;
+	pmt.bFixedSizeSamples = TRUE;
+	pmt.cbFormat = 88;
+	pmt.lSampleSize = 614400;
+	pmt.bTemporalCompression = FALSE;
+	VIDEOINFOHEADER format;
+	ZeroMemory(&format, sizeof(VIDEOINFOHEADER));
+	format.bmiHeader.biSize = 40;
+	format.bmiHeader.biWidth = 320;
+	format.bmiHeader.biHeight = 240;
+	format.bmiHeader.biPlanes = 1;
+	format.bmiHeader.biBitCount = 16;
+	format.bmiHeader.biCompression = 844715353;
+	format.bmiHeader.biSizeImage = 614400;
+	pmt.pbFormat = (BYTE*)&format;
+
+	// получение пина захвата и установка формата для него
+	CComQIPtr<IAMStreamConfig, &IID_IAMStreamConfig> isc(GetPin(pCamera, L"Запись"));
+	hr = isc->SetFormat(&pmt);
+	CHECK_HR(hr, "Can't set format");
+
+	// Получение интрефейса для работы с потоком и добавление его фильтра в граф
+	CComPtr<IBaseFilter> pSampleGrabber;
+	hr = pSampleGrabber.CoCreateInstance(CLSID_SampleGrabber);
+	CHECK_HR(hr, "Can't create SampleGrabber");
+	hr = pGraph->AddFilter(pSampleGrabber, L"SampleGrabber");
+	CHECK_HR(hr, _T("Can't add SampleGrabber to graph"));
+
+	
+	CComQIPtr<ISampleGrabber, &IID_ISampleGrabber> pSampleGrabber_isg(pSampleGrabber);
+	// Вызов ф-ции (0 - SampleCB, 1 - BufferCB) для работы с потоком
+	hr = pSampleGrabber_isg->SetCallback(new CCallbackObject(), 0);
+	CHECK_HR(hr, _T("Can't set callback"));
+
+	
+	
+	// подключение камеры к фильтру
+	hr = pBuilder->RenderStream(NULL, NULL, pCamera, NULL, pSampleGrabber);
+	CHECK_HR(hr, _T("Can't render stream to SampleGrabber"));
+	
+	
+	// отрисовка видео в окне
+	CComPtr<IBaseFilter> pVideoRenderer;
+	hr = pVideoRenderer.CoCreateInstance(CLSID_VideoRenderer);
+	CHECK_HR(hr, _T("Can't create VideoRenderer"));
+	hr = pGraph->AddFilter(pVideoRenderer, L"VideoRenderer");
+	// Если последний параметр поставить NULL, то тоже будет работать. Просто подхватит дефолтный рендерер
+	hr = pBuilder->RenderStream(NULL, NULL, pSampleGrabber, NULL, pVideoRenderer);
+	CHECK_HR(hr, _T("Can't render stream from SampleGrabber"));
+	
+
+	/*
+	// Без вывода в окно
+	CComPtr<IBaseFilter> pNullRenderer;
+	hr = pNullRenderer.CoCreateInstance(CLSID_NullRenderer);
+	CHECK_HR(hr, _T("Can't create NullRenderer"));
+	hr = pGraph->AddFilter(pNullRenderer, L"NullRenderer");
+	
+	hr = pBuilder->RenderStream(NULL, NULL, pSampleGrabber, NULL, pNullRenderer);
+	CHECK_HR(hr, _T("Can't render stream from SampleGrabber"));
+	*/
+	return S_OK;
+}
 
 int main()
 {
@@ -210,7 +310,7 @@ int main()
 	graph.CoCreateInstance(CLSID_FilterGraph);
 
 	printf("Building graph...\n");
-	HRESULT hr = BuildGraph(graph);
+	HRESULT hr = BuildGraph_StreamControl(graph);
 	if (hr == S_OK)
 	{
 		printf("Running");
@@ -225,13 +325,14 @@ int main()
 			long ev = 0;
 			long p1 = 0;
 			long p2 = 0;
-			printf(".");
+//			printf(".");
 			while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 			{
 				DispatchMessage(&msg);
 			}
 			while (mediaEvent->GetEvent(&ev, &p1, &p2, 0) == S_OK)
 			{
+				printf("Event ID = %x\n", ev);
 				if (ev == EC_COMPLETE || ev == EC_USERABORT)
 				{
 					printf("Done!\n");

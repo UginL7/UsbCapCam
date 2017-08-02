@@ -2,8 +2,7 @@
 #ifndef SAMPLE_GRABBER_H
 #define SAMPLE_GRABBER_H
 
-#include "rpc.h"
-#include "rpcndr.h"
+#include <DShow.h>
 
 // {0579154A-2B53-4994-B0D0-E773148EFF85}
 DEFINE_GUID(IID_ISampleGrabberCB,
